@@ -48,6 +48,7 @@ func (command *Command) Call(arg string) string {
 }
 
 func (channel *Channel) SendMessage(message string) {
+	time.Sleep(1500 * time.Millisecond)
 	channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), message)
 }
 
@@ -74,7 +75,8 @@ func (channel *Channel) Connect(OutStream chan string, InStream chan string) {
 				//fmt.Println("Echo")
 				OutStream <- e.Message
 			} else {
-				OutStream <- "No echo plx"
+				OutStream <- "Sent messages too quickly, gnark"
+				//OutStream <- "No echo plx"
 			}
 		})
 
@@ -92,18 +94,18 @@ func (bot *Bot) receiveMessage(message string) {
 }
 
 func (bot *Bot) fanOut(message string) {
-	for i := range bot.Channels {
+	for _, channel := range bot.Channels {
 		//go bot.Channels[i].SendMessage(message)
-		bot.Channels[i].InStream <- message
+		channel.InStream <- message
 	}
 }
 
 func (bot *Bot) connectAll() {
-	for i := range bot.Channels {
+	for i, channel := range bot.Channels {
 		inStream := make(chan string)
 		outStream := make(chan string)
 
-		go bot.Channels[i].Connect(outStream, inStream)
+		go channel.Connect(outStream, inStream)
 
 		fmt.Println("______________________________________________________________")
 		fmt.Println(i)
@@ -112,9 +114,9 @@ func (bot *Bot) connectAll() {
 	time.Sleep(2000 * time.Millisecond)
 	bot.fanOut("I am from thaa bot's OutStream")
 	for {
-		for i := range bot.Channels {
-			message := <-bot.Channels[i].OutStream
-			bot.receiveMessage(message)
+		for _, channel := range bot.Channels {
+			message := <-channel.OutStream
+			bot.receiveMessage(channel.Name + " : " + message)
 		}
 	}
 }
