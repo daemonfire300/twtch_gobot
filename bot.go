@@ -11,6 +11,7 @@ const (
 	TWITCH_PORT  = "6667"
 	BOT_NAME     = "ComboBot"
 	TWITCH_OAUTH = "oauth:g6svfy6x31g1wixsijfbsh1siikpgtg"
+	//TWITCH_OAUTH = "oauth:mfjaw7a1hx691ldwd7gpmgkv2zw8lit"
 )
 
 var reservedUsers = []string{"jtv", "twitch", "combobot"}
@@ -40,7 +41,7 @@ type Channel struct {
 }
 
 type Bot struct {
-	Channels []*Channel
+	Channels map[string]*Channel
 }
 
 func (command *Command) Call(arg string) string {
@@ -49,43 +50,48 @@ func (command *Command) Call(arg string) string {
 
 func (channel *Channel) SendMessage(message string) {
 	time.Sleep(1500 * time.Millisecond)
-	channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), message)
+	channel.OutStream <- fmt.Sprintf("#%s", channel.Name, message)
 }
 
 func (channel *Channel) Connect(OutStream chan string, InStream chan string) {
 	channel.OutStream = OutStream
 	channel.InStream = InStream
+
+	//userList := map[string]bool{}
+	//keyword := "kekse"
+
 	channel.Connection = *irc.IRC(BOT_NAME, BOT_NAME)
 	channel.Connection.Password = TWITCH_OAUTH
 	err := channel.Connection.Connect(TWITCH_URL + ":" + TWITCH_PORT)
 	if err != nil {
-		fmt.Println(fmt.Sprintf("Error can not connect to %s", channel.Name))
+		fmt.Println(fmt.Sprintf("Error can not connect to %s", "Twitch IRC"))
 	} else {
 		channel.Connection.AddCallback("001", func(e *irc.Event) {
-			//fmt.Println(fmt.Sprintf("Joing %s", channel.Name))
-			channel.Connection.Join(fmt.Sprintf("#%s", channel.Name))
+			//fmt.Println(fmt.Sprintf("Joing %s", bot.Name))
+			//bot.Connection.Join(fmt.Sprintf("#%s", channel.Name))
 			time.Sleep(1000 * time.Millisecond)
-			channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), "Hello World")
+			channel.Connection.Join(fmt.Sprintf("#%s", channel.Name))
+			//channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), "Hello World")
 		})
 		channel.Connection.AddCallback("PRIVMSG", func(e *irc.Event) {
 			/*fmt.Println(e.Nick)
-			fmt.Println(channel.Connection.GetNick())*/
-			if !stringInSlice(e.Nick, reservedUsers) {
-				channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), fmt.Sprintf("echo %s", e.Message))
-				//fmt.Println("Echo")
-				OutStream <- e.Message
+			fmt.Println(bot.Connection.GetNick())*/
+			channel.OutStream <- e.Message
+			/*if !stringInSlice(e.Nick, reservedUsers) {
+				if userList[e.Nick] {
+					e.Message = strings.TrimSpace(e.Message)
+					if e.Message != "" && e.Message == keyword {
+						userList[e.Nick] = true
+					}
+				}
+				channel.OutStream <- e.Message
 			} else {
-				OutStream <- "Sent messages too quickly, gnark"
-				//OutStream <- "No echo plx"
-			}
+				//OutStream <- "Sent messages too quickly, gnark"
+				channel.OutStream <- e.Message
+			}*/
 		})
 
 		go channel.Connection.Loop()
-		for {
-			message := <-InStream
-			time.Sleep(900 * time.Millisecond)
-			channel.SendMessage(message)
-		}
 	}
 }
 
@@ -96,27 +102,21 @@ func (bot *Bot) receiveMessage(message string) {
 func (bot *Bot) fanOut(message string) {
 	for _, channel := range bot.Channels {
 		//go bot.Channels[i].SendMessage(message)
-		channel.InStream <- message
+		go channel.Connection.Privmsg(fmt.Sprintf("#%s", channel.Name), message)
 	}
 }
 
 func (bot *Bot) connectAll() {
-	for i, channel := range bot.Channels {
-		inStream := make(chan string)
-		outStream := make(chan string)
-
-		go channel.Connect(outStream, inStream)
-
-		fmt.Println("______________________________________________________________")
-		fmt.Println(i)
-		fmt.Println("______________________________________________________________")
+	time.Sleep(2000 * time.Millisecond)
+	OutStream := make(chan string)
+	for _, channel := range bot.Channels {
+		InStream := make(chan string)
+		go channel.Connect(OutStream, InStream)
 	}
 	time.Sleep(2000 * time.Millisecond)
-	bot.fanOut("I am from thaa bot's OutStream")
+
 	for {
-		for _, channel := range bot.Channels {
-			message := <-channel.OutStream
-			bot.receiveMessage(channel.Name + " : " + message)
-		}
+		message := <-OutStream
+		fmt.Println(":::::: " + message)
 	}
 }

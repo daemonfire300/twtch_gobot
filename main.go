@@ -105,9 +105,14 @@ func main() {
 		Name: "combobot",
 	}
 
-	bot := &Bot{
-		Channels: []*Channel{df, cb},
+	kal := &Channel{
+		Name: "kalbuir_defiancecentral",
 	}
+
+	bot := &Bot{
+		Channels: map[string]*Channel{"dreadyfire": df, "combobot": cb, "kalbuir_defiancecentral": kal},
+	}
+
 	bot.connectAll()
 	//connect()
 }
