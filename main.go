@@ -98,19 +98,38 @@ func main() {
 	})
 
 	df := &Channel{
-		Name: "dreadyfire",
+		Name:            "dreadyfire",
+		Users:           make(map[string]User),
+		BannedWordList:  make(map[string]bool),
+		RepetitionCache: make(map[string]int),
 	}
 
 	cb := &Channel{
-		Name: "combobot",
+		Name:            "combobot",
+		Users:           make(map[string]User),
+		BannedWordList:  make(map[string]bool),
+		RepetitionCache: make(map[string]int),
 	}
 
-	kal := &Channel{
-		Name: "kalbuir_defiancecentral",
+	/*kal := &Channel{
+		Name:  "kalbuir_defiancecentral",
+		Users: make(map[string]User),
+	}*/
+	// "kalbuir_defiancecentral": kal
+	nugi := &Channel{
+		Name:            "nugiyen",
+		Users:           make(map[string]User),
+		BannedWordList:  make(map[string]bool),
+		RepetitionCache: make(map[string]int),
 	}
+	riotgamesbrazil := NewChannel("riotgamesbrazil")
+	esltv_cs := NewChannel("esltv_cs")
+	sacriel := NewChannel("sacriel")
 
+	nugi.BannedWordList["poe"] = true
+	df.BannedWordList["autoreifen"] = true
 	bot := &Bot{
-		Channels: map[string]*Channel{"dreadyfire": df, "combobot": cb, "kalbuir_defiancecentral": kal},
+		Channels: map[string]*Channel{"dreadyfire": df, "combobot": cb /*"kalbuir_defiancecentral": kal*/, "nugiyen": nugi, "riotgamesbrazil": riotgamesbrazil, "esltv_cs": esltv_cs, "sacriel": sacriel},
 	}
 
 	bot.connectAll()
