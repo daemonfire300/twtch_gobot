@@ -62,7 +62,7 @@ type Channel struct {
 	Users           map[string]User
 	BannedWordList  map[string]bool
 	Callbacks       map[string]func(*Event)
-	RepetitionCache map[string]int
+	RepetitionCache map[string]map[string]int
 }
 
 type Bot struct {
@@ -103,7 +103,7 @@ func NewChannel(name string) *Channel {
 		Name:            name,
 		Users:           make(map[string]User),
 		BannedWordList:  make(map[string]bool),
-		RepetitionCache: make(map[string]int),
+		RepetitionCache: make(map[string]map[string]int),
 	}
 }
 
@@ -122,19 +122,30 @@ func (channel *Channel) containsBlacklisted(message string) bool {
 }
 
 func (channel *Channel) flushRepetitionCache() {
-	channel.RepetitionCache = nil
-	channel.RepetitionCache = make(map[string]int)
+	channel.RepetitionCache = make(map[string]map[string]int)
 }
 
-func (channel *Channel) detectRepetion(e *Event) bool {
-	h := md5.New()
-	io.WriteString(h, e.Message)
-	key := fmt.Sprintf("%x", h.Sum(nil)) + e.User.Name
-	channel.RepetitionCache[key]++
-	v := channel.RepetitionCache[key]
-	if v > 3 {
-		fmt.Println("SPAM Pattern detected.... (simple)")
-		return true
+func (channel *Channel) flushRepetitionCacheSpecific(username string){
+	delete(channel.RepetitionCache, username)
+}
+
+func (channel *Channel) detectRepetition(e *Event) bool {
+	_, ok := channel.Users[e.User.Name]
+	if ok {
+		h := md5.New()
+		io.WriteString(h, e.Message)
+		key := fmt.Sprintf("%x", h.Sum(nil)) + e.User.Name
+		channel.RepetitionCache[e.User.Name][key]++
+		v := channel.RepetitionCache[e.User.Name][key]
+		size_u := len(channel.RepetitionCache[e.User.Name])
+		size_all := len(channel.RepetitionCache)
+		fmt.Println(fmt.Sprintf("UserCache: %d \t \t AllCache: %d", size_u, size_all))
+		if v > 3 {
+			fmt.Println("SPAM Pattern detected.... (simple)")
+			return true
+		} else {
+			return false
+		}
 	} else {
 		return false
 	}
@@ -142,7 +153,7 @@ func (channel *Channel) detectRepetion(e *Event) bool {
 
 func (channel *Channel) RcvMessage(e *irc.Event) {
 	ev := NewEvent(channel, "", e)
-	repetition := channel.detectRepetion(ev)
+	repetition := channel.detectRepetition(ev)
 	if repetition {
 		fmt.Println("Ban/Timeout User: " + e.Nick)
 	}
@@ -160,6 +171,8 @@ func (channel *Channel) RemoveUser(user string) {
 	_, ok := channel.Users[user]
 	if ok {
 		fmt.Println("Removing User " + user)
+		fmt.Println("Clearing Cache " + user)
+		//channel.flushRepetitionCacheSpecific(user)
 		delete(channel.Users, user)
 	}
 }
@@ -168,6 +181,7 @@ func (channel *Channel) AddUser(user string) {
 	_, ok := channel.Users[user]
 	if ok == false {
 		fmt.Println("Adding User " + user)
+		channel.RepetitionCache[user] = make(map[string]int)
 		channel.Users[user] = User{
 			Name: user,
 		}
