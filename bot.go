@@ -2,9 +2,14 @@ package main
 
 import (
 	"crypto/md5"
+	"database/sql"
 	"fmt"
 	"github.com/daemonfire300/go-ircevent"
+	_ "github.com/lib/pq"
 	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -30,7 +35,7 @@ func stringInSlice(a string, list []string) bool {
 
 type User struct {
 	Name            string
-	permissionLevel int // 0 guest, 1 user, 2 mod, 3 admin, 4 staff
+	PermissionLevel int // 0 guest, 1 user, 2 mod, 3 admin, 4 staff
 	banned          bool
 }
 
@@ -38,7 +43,7 @@ type Command struct {
 	Name            string
 	Args            map[string]string
 	Keyword         string
-	permissionLevel int
+	PermissionLevel int
 }
 
 type Message struct {
@@ -53,24 +58,33 @@ type Event struct {
 	User        User
 }
 
+type Hook struct {
+	Callback func(*Event)
+	Type     string
+	Priority int
+}
+
 type Channel struct {
 	Name            string
 	Connection      irc.Connection
 	OutStream       chan Message
 	InStream        chan string
-	permissionLevel int
+	PermissionLevel int
 	Users           map[string]User
 	BannedWordList  map[string]bool
-	Callbacks       map[string]func(*Event)
+	Hooks           []*Hook
 	RepetitionCache map[string]map[string]int
+	PollCache       int
 }
 
 type Bot struct {
-	Channels map[string]*Channel
+	Channels  map[string]*Channel
+	OutStream chan Message
+	Database  *sql.DB
 }
 
 func (user *User) isMod() bool {
-	if user.permissionLevel > 1 {
+	if user.PermissionLevel > 1 {
 		return true
 	} else {
 		return false
@@ -78,7 +92,7 @@ func (user *User) isMod() bool {
 }
 
 func (user *User) isAdmin() bool {
-	if user.permissionLevel > 2 {
+	if user.PermissionLevel > 2 {
 		return true
 	} else {
 		return false
@@ -87,6 +101,14 @@ func (user *User) isAdmin() bool {
 
 func (command *Command) Call(arg string) string {
 	return fmt.Sprintf("/%s %s", command.Keyword, arg)
+}
+
+func NewHook(callback func(*Event), typ string, prio int) *Hook {
+	return &Hook{
+		Callback: callback,
+		Type:     typ,
+		Priority: prio,
+	}
 }
 
 func NewEvent(channel *Channel, information string, e *irc.Event) *Event {
@@ -99,11 +121,35 @@ func NewEvent(channel *Channel, information string, e *irc.Event) *Event {
 }
 
 func NewChannel(name string) *Channel {
-	return &Channel{
+	channel := &Channel{
 		Name:            name,
 		Users:           make(map[string]User),
 		BannedWordList:  make(map[string]bool),
 		RepetitionCache: make(map[string]map[string]int),
+		Hooks:           make([]*Hook, 10),
+		PollCache:       0,
+	}
+	callback := func(e *Event) {
+		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(e.Message)), "!poll") && e.User.isAdmin() {
+			msg := strings.Split(strings.TrimSpace(strings.ToLower(e.Message)), " ")
+			if len(msg) > 1 {
+				name := msg[1]
+				options := msg[2:]
+				fmt.Println("Starting poll on  ", channel.Name, options)
+				channel.startPoll(600, name, options)
+			}
+		}
+		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(e.Message)), "!endpoll") && e.User.isAdmin() {
+			channel.stopPoll()
+		}
+	}
+	channel.addHook(NewHook(callback, "ManagePollOnMessage", 10))
+	return channel
+}
+
+func NewBot() *Bot {
+	return &Bot{
+		Channels: make(map[string]*Channel),
 	}
 }
 
@@ -121,15 +167,22 @@ func (channel *Channel) containsBlacklisted(message string) bool {
 	return false
 }
 
+func (channel *Channel) addHook(hook *Hook) {
+	channel.Hooks = append(channel.Hooks, hook)
+}
+
 func (channel *Channel) flushRepetitionCache() {
 	channel.RepetitionCache = make(map[string]map[string]int)
 }
 
-func (channel *Channel) flushRepetitionCacheSpecific(username string){
+func (channel *Channel) flushRepetitionCacheSpecific(username string) {
 	delete(channel.RepetitionCache, username)
 }
 
 func (channel *Channel) detectRepetition(e *Event) bool {
+	/*if len(e.Message) < 10{
+		return false
+	}*/
 	_, ok := channel.Users[e.User.Name]
 	if ok {
 		h := md5.New()
@@ -139,7 +192,7 @@ func (channel *Channel) detectRepetition(e *Event) bool {
 		v := channel.RepetitionCache[e.User.Name][key]
 		size_u := len(channel.RepetitionCache[e.User.Name])
 		size_all := len(channel.RepetitionCache)
-		fmt.Println(fmt.Sprintf("UserCache: %d \t \t AllCache: %d", size_u, size_all))
+		fmt.Println(fmt.Sprintf("UserCache: %d \t \t ChannelCache: %d", size_u, size_all))
 		if v > 3 {
 			fmt.Println("SPAM Pattern detected.... (simple)")
 			return true
@@ -151,8 +204,42 @@ func (channel *Channel) detectRepetition(e *Event) bool {
 	}
 }
 
+func (channel *Channel) startPoll(duration int, name string, options []string) {
+	callback := func(e *Event) {
+		for _, option := range options {
+			if strings.HasPrefix(strings.ToLower(e.Message), option) {
+				channel.PollCache++
+				fmt.Println("PollCount +1 ", option)
+			}
+		}
+	}
+	typ := "PollOnMessage"
+	prio := 10
+	channel.addHook(NewHook(callback, typ, prio))
+}
+
+func (channel *Channel) stopPoll() {
+	for i, hook := range channel.Hooks {
+		if hook != nil {
+			if hook.Type == "PollOnMessage" {
+				channel.Hooks = append(channel.Hooks[:i], channel.Hooks[i+1:]...)
+				channel.PollCache = 0
+			}
+		}
+	}
+}
+
+/*func (channel *Channel) detectPattern(e *Event, pattern string) {
+}*/
+
 func (channel *Channel) RcvMessage(e *irc.Event) {
 	ev := NewEvent(channel, "", e)
+	for _, hook := range channel.Hooks {
+		if hook != nil {
+			hook.Callback(ev)
+		}
+	}
+
 	repetition := channel.detectRepetition(ev)
 	if repetition {
 		fmt.Println("Ban/Timeout User: " + e.Nick)
@@ -160,7 +247,7 @@ func (channel *Channel) RcvMessage(e *irc.Event) {
 	if channel.containsBlacklisted(e.Message) {
 		fmt.Println("This message contains blacklisted words")
 	}
-	channel.OutStream <- Message{Channel: channel, Text: e.Message}
+	channel.OutStream <- Message{Channel: channel, Text: e.Message + fmt.Sprintf(" %d", ev.User.PermissionLevel)}
 }
 
 func (channel *Channel) SndMessage(message string) {
@@ -182,8 +269,13 @@ func (channel *Channel) AddUser(user string) {
 	if ok == false {
 		fmt.Println("Adding User " + user)
 		channel.RepetitionCache[user] = make(map[string]int)
+		permissionLevel := 0
+		if user == channel.Name {
+			permissionLevel = 3
+		}
 		channel.Users[user] = User{
-			Name: user,
+			Name:            user,
+			PermissionLevel: permissionLevel,
 		}
 	}
 }
@@ -240,20 +332,90 @@ func (bot *Bot) writeToChannel(channel string, message string) {
 	bot.Channels[channel].SndMessage(message)
 }
 
+func (bot *Bot) addChannel(channel *Channel) {
+	_, ok := bot.Channels[channel.Name]
+	if ok {
+		log.Printf("Channel %s already exists", channel.Name)
+	} else {
+		log.Printf("Adding channel %s too bot", channel.Name)
+		bot.Channels[channel.Name] = channel
+		InStream := make(chan string)
+		go channel.Connect(bot.OutStream, InStream)
+	}
+}
+
+func (bot *Bot) connectDatabase() {
+	db, err := sql.Open("postgres", "user=postgres dbname=gobot password=abc sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("\n\n__________________________________\n\n\nConnected to Database\n\n\n__________________________________\n\n")
+	bot.Database = db
+}
+
+func (bot *Bot) loadChannels() {
+	if bot.Database != nil {
+		err := bot.Database.Ping()
+		if err != nil {
+			log.Fatal(err)
+		}
+		rows, err := bot.Database.Query("SELECT * FROM channel")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		var id int64
+		var name string
+		var cnt int
+
+		log.Print("Loading channels")
+		for rows.Next() {
+			rows.Scan(&id, &name)
+			bot.Channels[name] = NewChannel(name)
+			cnt++
+			log.Print(".")
+		}
+		log.Printf("\nLoaded %d channels", cnt)
+	}
+}
+
+func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// read form value
+		channelName := r.FormValue("channel")
+		_, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(channelName) > 0 {
+			bot.addChannel(NewChannel(channelName))
+		}
+	}
+}
+
 func (bot *Bot) connectAll() {
-	time.Sleep(1000 * time.Millisecond)
+	bot.connectDatabase()
+	bot.loadChannels()
+	time.Sleep(2000 * time.Millisecond)
 	OutStream := make(chan Message)
+	bot.OutStream = OutStream
 	for _, channel := range bot.Channels {
 		InStream := make(chan string)
 		go channel.Connect(OutStream, InStream)
 	}
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(2000 * time.Millisecond)
+
+	log.Println("Starting WebAPI Server")
+
+	http.HandleFunc("/", bot.httpHandler())
+	http.ListenAndServe(":8181", nil)
+
+	log.Println("Started WebAPI Server")
+
+	time.Sleep(2000 * time.Millisecond)
 
 	for {
 		message := <-OutStream
 		fmt.Println(time.Now().String() + message.Channel.Name + " : " + message.Text)
-	}
-	for _, channel := range bot.Channels {
-		fmt.Println(channel.RepetitionCache)
 	}
 }
