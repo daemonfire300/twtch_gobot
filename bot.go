@@ -65,6 +65,7 @@ type Hook struct {
 }
 
 type Channel struct {
+	Id              int64
 	Name            string
 	Connection      irc.Connection
 	OutStream       chan Message
@@ -75,6 +76,7 @@ type Channel struct {
 	Hooks           []*Hook
 	RepetitionCache map[string]map[string]int
 	PollCache       int
+	Database        *sql.DB
 }
 
 type Bot struct {
@@ -120,16 +122,18 @@ func NewEvent(channel *Channel, information string, e *irc.Event) *Event {
 	}
 }
 
-func NewChannel(name string) *Channel {
+func NewChannel(id int64, name string, db *sql.DB) *Channel {
 	channel := &Channel{
+		Id:              id,
 		Name:            name,
 		Users:           make(map[string]User),
 		BannedWordList:  make(map[string]bool),
 		RepetitionCache: make(map[string]map[string]int),
 		Hooks:           make([]*Hook, 10),
 		PollCache:       0,
+		Database:        db,
 	}
-	callback := func(e *Event) {
+	pollCallback := func(e *Event) {
 		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(e.Message)), "!poll") && e.User.isAdmin() {
 			msg := strings.Split(strings.TrimSpace(strings.ToLower(e.Message)), " ")
 			if len(msg) > 1 {
@@ -143,7 +147,26 @@ func NewChannel(name string) *Channel {
 			channel.stopPoll()
 		}
 	}
-	channel.addHook(NewHook(callback, "ManagePollOnMessage", 10))
+
+	prefTextCallback := func(e *Event) {
+		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(e.Message)), "!text") && e.User.isMod() {
+			msg := strings.Split(strings.TrimSpace(strings.ToLower(e.Message)), " ")
+			if len(msg) > 1 {
+				alias := msg[1]
+				if len(alias) > 0 {
+					row := channel.Database.QueryRow("SELECT id, text FROM predefined_text WHERE alias = $1 AND channel_id = $2", alias, channel.Id)
+					var text string
+					var id int64
+					row.Scan(&id, &text)
+					fmt.Println(text)
+					fmt.Println(id)
+				}
+			}
+		}
+	}
+
+	channel.addHook(NewHook(pollCallback, "ManagePollOnMessage", 10))
+	channel.addHook(NewHook(prefTextCallback, "DisplayTextOnMessage", 5))
 	return channel
 }
 
@@ -371,9 +394,9 @@ func (bot *Bot) loadChannels() {
 		log.Print("Loading channels")
 		for rows.Next() {
 			rows.Scan(&id, &name)
-			bot.Channels[name] = NewChannel(name)
+			bot.Channels[name] = NewChannel(id, name, bot.Database)
 			cnt++
-			log.Print(".")
+			log.Print(name)
 		}
 		log.Printf("\nLoaded %d channels", cnt)
 	}
@@ -388,7 +411,7 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 			log.Fatal(err)
 		}
 		if len(channelName) > 0 {
-			bot.addChannel(NewChannel(channelName))
+			bot.addChannel(NewChannel(1337, channelName, bot.Database)) // broken!
 		}
 	}
 }
