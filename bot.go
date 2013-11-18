@@ -325,7 +325,9 @@ func (channel *Channel) Connect(OutStream chan Message, InStream chan string) {
 			time.Sleep(1000 * time.Millisecond)
 			channel.Connection.Join(channel.Self())
 		})
-		channel.Connection.AddCallback("PRIVMSG", channel.RcvMessage)
+		channel.Connection.AddCallback("PRIVMSG", func(e *irc.Event) {
+			channel.RcvMessage(e)
+		})
 
 		channel.Connection.AddCallback("JOIN", func(e *irc.Event) {
 			channel.AddUser(e.Nick)
