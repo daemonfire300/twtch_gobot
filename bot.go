@@ -355,6 +355,22 @@ func (bot *Bot) writeToChannel(channel string, message string) {
 	bot.Channels[channel].SndMessage(message)
 }
 
+func (bot *Bot) leaveChannel(channelName string) {
+	channel, ok := bot.Channels[channelName]
+	if ok {
+		fmt.Println("PARTing channel...")
+		channel.Connection.Part(channel.Self())
+	}
+}
+
+func (bot *Bot) joinChannel(channelName string) {
+	channel, ok := bot.Channels[channelName]
+	if ok {
+		fmt.Println("JOINing channel...")
+		channel.Connection.Join(channel.Self())
+	}
+}
+
 func (bot *Bot) addChannel(channel *Channel) {
 	_, ok := bot.Channels[channel.Name]
 	if ok {
@@ -389,13 +405,16 @@ func (bot *Bot) loadChannels() {
 
 		var id int64
 		var name string
+		var enabled bool
 		var cnt int
 
 		log.Print("Loading channels")
 		for rows.Next() {
-			rows.Scan(&id, &name)
-			bot.Channels[name] = NewChannel(id, name, bot.Database)
-			cnt++
+			rows.Scan(&id, &name, &enabled)
+			if enabled {
+				bot.Channels[name] = NewChannel(id, name, bot.Database)
+				cnt++
+			}
 			log.Print(name)
 		}
 		log.Printf("\nLoaded %d channels", cnt)
@@ -406,12 +425,23 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// read form value
 		channelName := r.FormValue("channel")
+		action := r.FormValue("action")
 		_, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			log.Fatal(err)
 		}
 		if len(channelName) > 0 {
-			bot.addChannel(NewChannel(1337, channelName, bot.Database)) // broken!
+			switch {
+			case action == "create":
+				bot.addChannel(NewChannel(1337, channelName, bot.Database))
+			case action == "PART":
+				bot.leaveChannel(channelName)
+			case action == "JOIN":
+				bot.joinChannel(channelName)
+			default:
+				fmt.Println("No action specified, doing nothing")
+			}
+			//bot.addChannel(NewChannel(1337, channelName, bot.Database)) // broken!
 		}
 	}
 }
