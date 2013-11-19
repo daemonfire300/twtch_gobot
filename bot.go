@@ -389,8 +389,9 @@ func (bot *Bot) connectDatabase() {
 	db, err := sql.Open("postgres", "user=postgres dbname=gobot password=abc sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
+	} else {
+		log.Printf("\n\n__________________________________\n\n\nConnected to Database\n\n\n__________________________________\n\n")
 	}
-	log.Printf("\n\n__________________________________\n\n\nConnected to Database\n\n\n__________________________________\n\n")
 	bot.Database = db
 }
 
@@ -451,14 +452,14 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 func (bot *Bot) connectAll() {
 	bot.connectDatabase()
 	bot.loadChannels()
-	time.Sleep(2000 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 	OutStream := make(chan Message)
 	bot.OutStream = OutStream
 	for _, channel := range bot.Channels {
 		InStream := make(chan string)
 		go channel.Connect(OutStream, InStream)
 	}
-	time.Sleep(2000 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 
 	log.Println("Starting WebAPI Server")
 
@@ -467,7 +468,7 @@ func (bot *Bot) connectAll() {
 
 	log.Println("Started WebAPI Server")
 
-	time.Sleep(2000 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 
 	for {
 		message := <-OutStream
