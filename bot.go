@@ -67,7 +67,7 @@ type Hook struct {
 type Channel struct {
 	Id              int64
 	Name            string
-	Connection      irc.Connection
+	Connection      *irc.Connection
 	OutStream       chan Message
 	InStream        chan string
 	PermissionLevel int
@@ -80,9 +80,10 @@ type Channel struct {
 }
 
 type Bot struct {
-	Channels  map[string]*Channel
-	OutStream chan Message
-	Database  *sql.DB
+	Channels   map[string]*Channel
+	OutStream  chan Message
+	Database   *sql.DB
+	Connection *irc.Connection
 }
 
 func (user *User) isMod() bool {
@@ -315,7 +316,7 @@ func (channel *Channel) HistoryAddUser(userList []string) {
 func (channel *Channel) Connect(OutStream chan Message, InStream chan string) {
 	channel.OutStream = OutStream
 	channel.InStream = InStream
-	channel.Connection = *irc.IRC(BOT_NAME, BOT_NAME)
+	channel.Connection = irc.IRC(BOT_NAME, BOT_NAME)
 	channel.Connection.Password = TWITCH_OAUTH
 	err := channel.Connection.Connect(TWITCH_URL + ":" + TWITCH_PORT)
 	if err != nil {
@@ -341,6 +342,12 @@ func (channel *Channel) Connect(OutStream chan Message, InStream chan string) {
 
 		go channel.Connection.Loop()
 	}
+}
+
+func (channel *Channel) ConnectB(OutStream chan Message, InStream chan string, connection *irc.Connection) {
+	channel.OutStream = OutStream
+	channel.InStream = InStream
+	channel.Connection = connection
 }
 
 func (bot *Bot) receiveMessage(message string) {
@@ -449,15 +456,80 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (bot *Bot) argsToChannel(args []string) *Channel {
+	if len(args) > 0 {
+		rawName := args[len(args)-1]
+		name := strings.TrimSpace(strings.Replace(rawName, "#", "", -1))
+
+		channel, ok := bot.Channels[name]
+		if ok {
+			return channel
+		} else {
+			return nil
+		}
+	} else {
+		return nil
+	}
+}
+
+func (bot *Bot) connectIRC() {
+	bot.Connection = irc.IRC(BOT_NAME, BOT_NAME)
+	bot.Connection.Password = TWITCH_OAUTH
+	err := bot.Connection.Connect(TWITCH_URL + ":" + TWITCH_PORT)
+	if err != nil {
+		fmt.Println(fmt.Sprintf("Error can not connect to %s", "Twitch IRC"))
+	} else {
+		bot.Connection.AddCallback("001", func(e *irc.Event) {
+			time.Sleep(1000 * time.Millisecond)
+			for _, channel := range bot.Channels {
+				bot.Connection.Join(channel.Self())
+			}
+		})
+		bot.Connection.AddCallback("PRIVMSG", func(e *irc.Event) {
+			channel := bot.argsToChannel(e.Arguments)
+			if channel != nil {
+				channel.RcvMessage(e)
+			}
+		})
+
+		bot.Connection.AddCallback("JOIN", func(e *irc.Event) {
+			channel := bot.argsToChannel(e.Arguments)
+			//fmt.Println("triggered join")
+			//fmt.Println(e.Arguments)
+			if channel != nil {
+				channel.AddUser(e.Nick)
+			}
+		})
+		bot.Connection.AddCallback("PART", func(e *irc.Event) {
+			channel := bot.argsToChannel(e.Arguments)
+			if channel != nil {
+				channel.RemoveUser(e.Nick)
+			}
+		})
+		bot.Connection.AddCallback("353", func(e *irc.Event) {
+			channel := bot.argsToChannel(e.Arguments)
+			//fmt.Println("triggered history add")
+			//fmt.Println(e.Arguments)
+			if channel != nil {
+				channel.HistoryAddUser(strings.Split(e.Message, " "))
+			}
+		})
+
+		go bot.Connection.Loop()
+	}
+}
+
 func (bot *Bot) connectAll() {
 	bot.connectDatabase()
 	bot.loadChannels()
+	bot.connectIRC()
 	time.Sleep(1000 * time.Millisecond)
 	OutStream := make(chan Message)
 	bot.OutStream = OutStream
 	for _, channel := range bot.Channels {
 		InStream := make(chan string)
-		go channel.Connect(OutStream, InStream)
+		//go channel.Connect(OutStream, InStream)
+		channel.ConnectB(OutStream, InStream, bot.Connection)
 	}
 	time.Sleep(1000 * time.Millisecond)
 
