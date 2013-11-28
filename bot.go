@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -159,15 +160,26 @@ func NewChannel(id int64, name string, db *sql.DB) *Channel {
 					var text string
 					var id int64
 					row.Scan(&id, &text)
-					fmt.Println(text)
-					fmt.Println(id)
+					fmt.Println(fmt.Sprintf("%s: %d", text, id))
 				}
 			}
 		}
 	}
 
+	subscribedTextCallback := func(e *Event) {
+		expr := `^\w+\s+just subscribed!$`
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if re.MatchString(strings.TrimSpace(strings.ToLower(e.Message))) { // && !e.User.isAdmin()
+			log.Println("onNewSubscriberHook", "implement your logic here", e.Message, e.Information)
+		}
+	}
+
 	channel.addHook(NewHook(pollCallback, "ManagePollOnMessage", 10))
 	channel.addHook(NewHook(prefTextCallback, "DisplayTextOnMessage", 5))
+	channel.addHook(NewHook(subscribedTextCallback, "PerformOnNewSubscriber", 10))
 	return channel
 }
 
@@ -257,7 +269,7 @@ func (channel *Channel) stopPoll() {
 }*/
 
 func (channel *Channel) RcvMessage(e *irc.Event) {
-	ev := NewEvent(channel, "", e)
+	ev := NewEvent(channel, e.Raw, e)
 	for _, hook := range channel.Hooks {
 		if hook != nil {
 			hook.Callback(ev)
@@ -271,6 +283,7 @@ func (channel *Channel) RcvMessage(e *irc.Event) {
 	if channel.containsBlacklisted(e.Message) {
 		fmt.Println("This message contains blacklisted words")
 	}
+
 	channel.OutStream <- Message{Channel: channel, Text: e.Message + fmt.Sprintf(" %d", ev.User.PermissionLevel)}
 }
 
@@ -344,7 +357,7 @@ func (channel *Channel) Connect(OutStream chan Message, InStream chan string) {
 	}
 }
 
-func (channel *Channel) ConnectB(OutStream chan Message, InStream chan string, connection *irc.Connection) {
+func (channel *Channel) ConnectBot(OutStream chan Message, InStream chan string, connection *irc.Connection) {
 	channel.OutStream = OutStream
 	channel.InStream = InStream
 	channel.Connection = connection
@@ -388,7 +401,7 @@ func (bot *Bot) addChannel(channel *Channel) {
 		log.Printf("Adding channel %s too bot", channel.Name)
 		bot.Channels[channel.Name] = channel
 		InStream := make(chan string)
-		go channel.Connect(bot.OutStream, InStream)
+		channel.ConnectBot(bot.OutStream, InStream, bot.Connection)
 	}
 }
 
@@ -441,9 +454,14 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 			log.Fatal(err)
 		}
 		if len(channelName) > 0 {
+			channelName = strings.ToLower(channelName)
 			switch {
 			case action == "create":
-				bot.addChannel(NewChannel(1337, channelName, bot.Database))
+				row := bot.Database.QueryRow("INSERT INTO channel(name) VALUES($1) RETURNING id", channelName)
+				var id int64
+				row.Scan(&id)
+				fmt.Println(id)
+				bot.addChannel(NewChannel(id, channelName, bot.Database))
 			case action == "PART":
 				bot.leaveChannel(channelName)
 			case action == "JOIN":
@@ -529,7 +547,7 @@ func (bot *Bot) connectAll() {
 	for _, channel := range bot.Channels {
 		InStream := make(chan string)
 		//go channel.Connect(OutStream, InStream)
-		channel.ConnectB(OutStream, InStream, bot.Connection)
+		channel.ConnectBot(OutStream, InStream, bot.Connection)
 	}
 	time.Sleep(1000 * time.Millisecond)
 
