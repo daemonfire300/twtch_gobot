@@ -399,11 +399,9 @@ func (bot *Bot) leaveChannel(channelName string) {
 func (bot *Bot) activateChannel(channelName string) {
 	channel, ok := bot.Channels[channelName]
 	if ok {
-		if channel.Activated != true {
-			fmt.Println("activating channel...")
-			channel.Activated = true
-			bot.joinChannel(channelName)
-		}
+		fmt.Println("activating channel...")
+		channel.Activated = true
+		bot.joinChannel(channelName)
 	}
 }
 
