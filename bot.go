@@ -68,6 +68,7 @@ type Hook struct {
 type Channel struct {
 	Id              int64
 	Name            string
+	Activated       bool
 	Connection      *irc.Connection
 	OutStream       chan Message
 	InStream        chan string
@@ -128,6 +129,7 @@ func NewChannel(id int64, name string, db *sql.DB) *Channel {
 	channel := &Channel{
 		Id:              id,
 		Name:            name,
+		Activated:       false,
 		Users:           make(map[string]User),
 		BannedWordList:  make(map[string]bool),
 		RepetitionCache: make(map[string]map[string]int),
@@ -377,6 +379,15 @@ func (bot *Bot) writeToChannel(channel string, message string) {
 	bot.Channels[channel].SndMessage(message)
 }
 
+func (bot *Bot) deactivateChannel(channelName string) {
+	channel, ok := bot.Channels[channelName]
+	if ok {
+		fmt.Println("deactivating channel...")
+		channel.Activated = false
+		bot.leaveChannel(channelName)
+	}
+}
+
 func (bot *Bot) leaveChannel(channelName string) {
 	channel, ok := bot.Channels[channelName]
 	if ok {
@@ -385,11 +396,24 @@ func (bot *Bot) leaveChannel(channelName string) {
 	}
 }
 
+func (bot *Bot) activateChannel(channelName string) {
+	channel, ok := bot.Channels[channelName]
+	if ok {
+		if channel.Activated != true {
+			fmt.Println("activating channel...")
+			channel.Activated = true
+			bot.joinChannel(channelName)
+		}
+	}
+}
+
 func (bot *Bot) joinChannel(channelName string) {
 	channel, ok := bot.Channels[channelName]
 	if ok {
-		fmt.Println("JOINing channel...")
-		channel.Connection.Join(channel.Self())
+		if channel.Activated {
+			fmt.Println("JOINing channel...")
+			channel.Connection.Join(channel.Self())
+		}
 	}
 }
 
@@ -457,15 +481,21 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 			channelName = strings.ToLower(channelName)
 			switch {
 			case action == "create":
-				row := bot.Database.QueryRow("INSERT INTO channel(name) VALUES($1) RETURNING id", channelName)
 				var id int64
-				row.Scan(&id)
-				fmt.Println(id)
-				bot.addChannel(NewChannel(id, channelName, bot.Database))
+				existsRow := bot.Database.QueryRow("SELECT id FROM channel WHERE name = $1", channelName).Scan(&id)
+				if existsRow == sql.ErrNoRows {
+					row := bot.Database.QueryRow("INSERT INTO channel(name) VALUES($1) RETURNING id", channelName)
+					id = 0
+					row.Scan(&id)
+					fmt.Println(id)
+					bot.addChannel(NewChannel(id, channelName, bot.Database))
+				} else {
+					fmt.Println("Channel already exists")
+				}
 			case action == "PART":
-				bot.leaveChannel(channelName)
+				bot.deactivateChannel(channelName)
 			case action == "JOIN":
-				bot.joinChannel(channelName)
+				bot.activateChannel(channelName)
 			default:
 				fmt.Println("No action specified, doing nothing")
 			}
