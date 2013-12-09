@@ -456,8 +456,9 @@ func (bot *Bot) loadChannels() {
 		log.Print("Loading channels")
 		for rows.Next() {
 			rows.Scan(&id, &name, &enabled)
+			bot.Channels[name] = NewChannel(id, name, bot.Database)
+			bot.Channels[name].Activated = enabled
 			if enabled {
-				bot.Channels[name] = NewChannel(id, name, bot.Database)
 				cnt++
 			}
 			log.Print(name)
@@ -496,8 +497,17 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 				bot.activateChannel(channelName)
 			default:
 				fmt.Println("No action specified, doing nothing")
+				fmt.Fprintf(w, "No action specified, doing nothing: %s %s", channelName, action)
 			}
 			//bot.addChannel(NewChannel(1337, channelName, bot.Database)) // broken!
+		} else {
+			switch {
+			case action == "listAll":
+				for _, channel := range bot.Channels {
+					//fmt.Fprintf(w, "* %s  active: %t", channel.Name, channel.Activated)
+					fmt.Fprintln(w, fmt.Sprintf("* %s  active: %t", channel.Name, channel.Activated))
+				}
+			}
 		}
 	}
 }
@@ -528,7 +538,7 @@ func (bot *Bot) connectIRC() {
 		bot.Connection.AddCallback("001", func(e *irc.Event) {
 			time.Sleep(1000 * time.Millisecond)
 			for _, channel := range bot.Channels {
-				bot.Connection.Join(channel.Self())
+				bot.joinChannel(channel.Name)
 			}
 		})
 		bot.Connection.AddCallback("PRIVMSG", func(e *irc.Event) {
