@@ -260,6 +260,7 @@ func (channel *Channel) stopPoll() {
 	for i, hook := range channel.Hooks {
 		if hook != nil {
 			if hook.Type == "PollOnMessage" {
+				log.Println(fmt.Sprintf("Closing Poll: Result <%d>", channel.PollCache))
 				channel.Hooks = append(channel.Hooks[:i], channel.Hooks[i+1:]...)
 				channel.PollCache = 0
 			}
