@@ -1,4 +1,4 @@
-package main
+package bot
 
 import (
 	"container/list"
@@ -99,7 +99,7 @@ func main() {
 
 	/*df := NewChannel("dreadyfire")
 
-		cb := NewChannel("combobot")*/
+			cb := NewChannel("combobot")*/
 
 	/*kal := &Channel{
 		Name:  "kalbuir_defiancecentral",

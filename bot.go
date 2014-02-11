@@ -1,4 +1,4 @@
-package main
+package bot
 
 import (
 	"crypto/md5"
@@ -593,7 +593,7 @@ func (bot *Bot) connectAll() {
 	log.Println("Starting WebAPI Server")
 
 	http.HandleFunc("/", bot.httpHandler())
-	http.ListenAndServe(":8181", nil)
+	go http.ListenAndServe(":8181", nil)
 
 	log.Println("Started WebAPI Server")
 
