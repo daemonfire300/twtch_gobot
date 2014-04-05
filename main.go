@@ -1,4 +1,4 @@
-package bot
+package main
 
 import (
 	"container/list"
@@ -99,7 +99,7 @@ func main() {
 
 	/*df := NewChannel("dreadyfire")
 
-			cb := NewChannel("combobot")*/
+							cb := NewChannel("combobot")*/
 
 	/*kal := &Channel{
 		Name:  "kalbuir_defiancecentral",
@@ -115,6 +115,6 @@ func main() {
 	chu := NewChannel("chu8")*/
 
 	bot := NewBot()
-	bot.connectAll()
+	bot.ConnectAll()
 	//connect()
 }

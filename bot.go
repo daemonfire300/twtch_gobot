@@ -1,4 +1,4 @@
-package bot
+package main
 
 import (
 	"crypto/md5"
@@ -32,60 +32,6 @@ func stringInSlice(a string, list []string) bool {
 		}
 	}
 	return false
-}
-
-type User struct {
-	Name            string
-	PermissionLevel int // 0 guest, 1 user, 2 mod, 3 admin, 4 staff
-	banned          bool
-}
-
-type Command struct {
-	Name            string
-	Args            map[string]string
-	Keyword         string
-	PermissionLevel int
-}
-
-type Message struct {
-	Channel *Channel
-	Text    string
-}
-
-type Event struct {
-	Channel     *Channel
-	Information string
-	Message     string
-	User        User
-}
-
-type Hook struct {
-	Callback func(*Event)
-	Type     string
-	Priority int
-}
-
-type Channel struct {
-	Id              int64
-	Name            string
-	Activated       bool
-	Connection      *irc.Connection
-	OutStream       chan Message
-	InStream        chan string
-	PermissionLevel int
-	Users           map[string]User
-	BannedWordList  map[string]bool
-	Hooks           []*Hook
-	RepetitionCache map[string]map[string]int
-	PollCache       int
-	Database        *sql.DB
-}
-
-type Bot struct {
-	Channels   map[string]*Channel
-	OutStream  chan Message
-	Database   *sql.DB
-	Connection *irc.Connection
 }
 
 func (user *User) isMod() bool {
@@ -428,7 +374,7 @@ func (bot *Bot) addChannel(channel *Channel) {
 	}
 }
 
-func (bot *Bot) connectDatabase() {
+func (bot *Bot) ConnectDatabase() {
 	db, err := sql.Open("postgres", "user=postgres dbname=gobot password=abc sslmode=disable")
 	if err != nil {
 		log.Fatal(err)
@@ -438,7 +384,7 @@ func (bot *Bot) connectDatabase() {
 	bot.Database = db
 }
 
-func (bot *Bot) loadChannels() {
+func (bot *Bot) LoadChannels() {
 	if bot.Database != nil {
 		err := bot.Database.Ping()
 		if err != nil {
@@ -492,6 +438,10 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 				} else {
 					fmt.Println("Channel already exists")
 				}
+			case action == "list":
+				for _, user := range bot.Channels[channelName].Users {
+					fmt.Fprintf(w, "* %s\n", user.Name)
+				}
 			case action == "PART":
 				bot.deactivateChannel(channelName)
 			case action == "JOIN":
@@ -513,7 +463,7 @@ func (bot *Bot) httpHandler() func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (bot *Bot) argsToChannel(args []string) *Channel {
+func (bot *Bot) ArgsToChannel(args []string) *Channel {
 	if len(args) > 0 {
 		rawName := args[len(args)-1]
 		name := strings.TrimSpace(strings.Replace(rawName, "#", "", -1))
@@ -529,57 +479,69 @@ func (bot *Bot) argsToChannel(args []string) *Channel {
 	}
 }
 
-func (bot *Bot) connectIRC() {
+func (bot *Bot) Callback_001(e *irc.Event) {
+	time.Sleep(1000 * time.Millisecond)
+	for _, channel := range bot.Channels {
+		bot.joinChannel(channel.Name)
+	}
+}
+
+func (bot *Bot) Callback_PRIVMSG(e *irc.Event) {
+	channel := bot.ArgsToChannel(e.Arguments)
+	if channel != nil {
+		channel.RcvMessage(e)
+	}
+}
+
+func (bot *Bot) Callback_JOIN(e *irc.Event) {
+	channel := bot.ArgsToChannel(e.Arguments)
+	//fmt.Println("triggered join")
+	//fmt.Println(e.Arguments)
+	if channel != nil {
+		channel.AddUser(e.Nick)
+	}
+}
+
+func (bot *Bot) Callback_PART(e *irc.Event) {
+	channel := bot.ArgsToChannel(e.Arguments)
+	if channel != nil {
+		channel.RemoveUser(e.Nick)
+	}
+}
+
+func (bot *Bot) Callback_353(e *irc.Event) {
+	channel := bot.ArgsToChannel(e.Arguments)
+	//fmt.Println("triggered history add")
+	//fmt.Println(e.Arguments)
+	if channel != nil {
+		channel.HistoryAddUser(strings.Split(e.Message, " "))
+	}
+}
+
+func (bot *Bot) SetupDefaultCallbacks() {
+	bot.Connection.AddCallback("001", bot.Callback_001)
+	bot.Connection.AddCallback("PRIVMSG", bot.Callback_PRIVMSG)
+	bot.Connection.AddCallback("JOIN", bot.Callback_JOIN)
+	bot.Connection.AddCallback("PART", bot.Callback_PART)
+	bot.Connection.AddCallback("353", bot.Callback_353)
+}
+
+func (bot *Bot) ConnectIRC() {
 	bot.Connection = irc.IRC(BOT_NAME, BOT_NAME)
 	bot.Connection.Password = TWITCH_OAUTH
 	err := bot.Connection.Connect(TWITCH_URL + ":" + TWITCH_PORT)
 	if err != nil {
 		fmt.Println(fmt.Sprintf("Error can not connect to %s", "Twitch IRC"))
 	} else {
-		bot.Connection.AddCallback("001", func(e *irc.Event) {
-			time.Sleep(1000 * time.Millisecond)
-			for _, channel := range bot.Channels {
-				bot.joinChannel(channel.Name)
-			}
-		})
-		bot.Connection.AddCallback("PRIVMSG", func(e *irc.Event) {
-			channel := bot.argsToChannel(e.Arguments)
-			if channel != nil {
-				channel.RcvMessage(e)
-			}
-		})
-
-		bot.Connection.AddCallback("JOIN", func(e *irc.Event) {
-			channel := bot.argsToChannel(e.Arguments)
-			//fmt.Println("triggered join")
-			//fmt.Println(e.Arguments)
-			if channel != nil {
-				channel.AddUser(e.Nick)
-			}
-		})
-		bot.Connection.AddCallback("PART", func(e *irc.Event) {
-			channel := bot.argsToChannel(e.Arguments)
-			if channel != nil {
-				channel.RemoveUser(e.Nick)
-			}
-		})
-		bot.Connection.AddCallback("353", func(e *irc.Event) {
-			channel := bot.argsToChannel(e.Arguments)
-			//fmt.Println("triggered history add")
-			//fmt.Println(e.Arguments)
-			if channel != nil {
-				channel.HistoryAddUser(strings.Split(e.Message, " "))
-			}
-		})
-
+		bot.SetupDefaultCallbacks()
 		go bot.Connection.Loop()
 	}
 }
 
-func (bot *Bot) connectAll() {
-	bot.connectDatabase()
-	bot.loadChannels()
-	bot.connectIRC()
+func (bot *Bot) ConnectAll() {
+	bot.ConnectDatabase()
+	bot.LoadChannels()
+	bot.ConnectIRC()
 	time.Sleep(1000 * time.Millisecond)
 	OutStream := make(chan Message)
 	bot.OutStream = OutStream
